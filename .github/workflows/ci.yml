@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: supplychainiq
+          POSTGRES_USER: sciq_admin
+          POSTGRES_PASSWORD: ci-admin
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sciq_admin -d supplychainiq"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      # Throwaway credentials for the CI-only database; real secrets never live in the repo.
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: supplychainiq
+      POSTGRES_USER: sciq_admin
+      POSTGRES_PASSWORD: ci-admin
+      INGEST_DB_PASSWORD: ci-ingest
+      MCP_DB_PASSWORD: ci-mcp
+      APP_DB_PASSWORD: ci-app
+      LOG_FORMAT: console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Type check
+        run: uv run mypy
+      - name: Migrations (twice, must be idempotent)
+        run: |
+          uv run python -m supplychainiq.db.migrate
+          uv run python -m supplychainiq.db.migrate
+      - name: Tests
+        run: uv run pytest --cov=supplychainiq --cov-report=term-missing
